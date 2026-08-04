@@ -825,7 +825,7 @@ func (s *Store) SaveThread(device, date, channel, ts string) error {
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO threads (device, date, channel, thread_ts, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		device, date, channel, ts, time.Now().UTC().Format(time.RFC3339Nano),
+		device, date, channel, ts, time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("save thread: %w", err)
@@ -853,7 +853,7 @@ func (s *Store) AlreadyPosted(device, tsKey string) (bool, error) {
 func (s *Store) MarkPosted(device, tsKey string) error {
 	_, err := s.db.Exec(
 		`INSERT OR IGNORE INTO posted (device, ts_key, posted_at) VALUES (?, ?, ?)`,
-		device, tsKey, time.Now().UTC().Format(time.RFC3339Nano),
+		device, tsKey, time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("mark posted: %w", err)
@@ -865,7 +865,7 @@ func (s *Store) MarkPosted(device, tsKey string) error {
 func (s *Store) Prune(before time.Time) error {
 	_, err := s.db.Exec(
 		`DELETE FROM posted WHERE posted_at < ?`,
-		before.UTC().Format(time.RFC3339Nano),
+		before.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("prune posted: %w", err)
@@ -1142,6 +1142,7 @@ package router
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1185,7 +1186,7 @@ func (p *fakePoster) Post(_ context.Context, channel, threadTS, text string) (st
 	p.n++
 	return "ts-" + itoa(p.n), nil
 }
-func itoa(n int) string { return time.Duration(n).String() } // any unique string
+func itoa(n int) string { return strconv.Itoa(n) }
 
 func chicago(t *testing.T) *time.Location {
 	loc, err := time.LoadLocation("America/Chicago")
@@ -1399,6 +1400,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -1413,6 +1415,23 @@ import (
 )
 
 const subscribeTopic = "horton/transcriptions/+"
+
+// slackOptsFromEnv reads optional Slack overrides. These are test/ops hooks,
+// deliberately not part of the documented NP_* config: NP_SLACK_API_URL points
+// the client at a fake server; NP_SLACK_MIN_INTERVAL_MS tunes (or disables) the
+// inter-post delay.
+func slackOptsFromEnv() []slackclient.Option {
+	var opts []slackclient.Option
+	if u := os.Getenv("NP_SLACK_API_URL"); u != "" {
+		opts = append(opts, slackclient.WithAPIURL(u))
+	}
+	if v := os.Getenv("NP_SLACK_MIN_INTERVAL_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil {
+			opts = append(opts, slackclient.WithMinInterval(time.Duration(ms)*time.Millisecond))
+		}
+	}
+	return opts
+}
 
 func main() {
 	_ = godotenv.Load() // best-effort: load .env if present
@@ -1444,7 +1463,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	slack := slackclient.New(cfg.SlackToken)
+	slack := slackclient.New(cfg.SlackToken, slackOptsFromEnv()...)
 	rt := router.New(st, slack, cfg.SlackChannel, cfg.Location)
 
 	// Bounded queue: MQTT handler → worker. Full channel = backpressure.
@@ -1478,8 +1497,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}()
 
 	msgHandler := func(_ mqtt.Client, m mqtt.Message) {
-		device, skip := transcript.DeviceFromTopic(m.Topic())
-		if skip {
+		if _, skip := transcript.DeviceFromTopic(m.Topic()); skip {
 			return
 		}
 		u, err := transcript.Parse(m.Topic(), m.Payload())
@@ -1487,7 +1505,6 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			logger.Warn("parse", "topic", m.Topic(), "err", err)
 			return
 		}
-		_ = device
 		select {
 		case utterances <- u: // may block → backpressure
 		case <-ctx.Done():
@@ -1677,13 +1694,11 @@ func TestEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Point slack-go's default at our fake by overriding the API URL via env-free
-	// construction: run() builds slackclient.New(token) with the real URL, so we
-	// instead set the SLACK API base through the client option. To keep run()
-	// unchanged, use the slackclient package's WithAPIURL by setting NP via a hook:
-	// simplest path — set the fake through the slack library's global is not
-	// available, so we rely on run() reading NP_SLACK_API_URL (added below).
+	// run() reads these env hooks (see slackOptsFromEnv in main.go): point Slack
+	// at the fake server and disable the inter-post delay so the test is fast and
+	// deterministic.
 	t.Setenv("NP_SLACK_API_URL", srv.URL+"/")
+	t.Setenv("NP_SLACK_MIN_INTERVAL_MS", "0")
 
 	loc, _ := time.LoadLocation("America/Chicago")
 	cfg := config.Config{
@@ -1739,31 +1754,21 @@ func TestEndToEnd(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Wire the test hook into run()**
+The Slack override hooks (`NP_SLACK_API_URL`, `NP_SLACK_MIN_INTERVAL_MS`) are
+already read by `slackOptsFromEnv` in `cmd/noseyposey/main.go` (Task 8), so no
+production code changes are needed here — this task only adds the test file.
 
-The test points Slack at a fake server via `NP_SLACK_API_URL`. Add support in `cmd/noseyposey/main.go`: in `run`, build the Slack client with that override when present.
-
-Modify the Slack construction in `run` (replace the `slack := slackclient.New(cfg.SlackToken)` line):
-```go
-	var slackOpts []slackclient.Option
-	if u := os.Getenv("NP_SLACK_API_URL"); u != "" {
-		slackOpts = append(slackOpts, slackclient.WithAPIURL(u))
-	}
-	slack := slackclient.New(cfg.SlackToken, slackOpts...)
-```
-Add `"os"` to the imports of `main.go` if not already present (it is, for `os.Exit`/`os.Stderr`).
-
-- [ ] **Step 3: Run the integration test**
+- [ ] **Step 2: Run the integration test**
 
 Run: `go test ./cmd/noseyposey/ -run TestEndToEnd -v`
 Expected: PASS (or SKIP if `mosquitto` is unavailable — it is installed here, so PASS).
 
-- [ ] **Step 4: Run the full check**
+- [ ] **Step 3: Run the full check**
 
 Run: `./scripts/check`
 Expected: `check: OK`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add cmd/noseyposey
