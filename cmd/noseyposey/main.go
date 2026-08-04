@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +23,20 @@ import (
 )
 
 const subscribeTopic = "horton/transcriptions/+"
+
+// parseLevel maps a string log level to slog.Level, defaulting to Info.
+func parseLevel(s string) slog.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
 
 // slackOptsFromEnv reads optional Slack overrides. These are test/ops hooks,
 // deliberately not part of the documented NP_* config: NP_SLACK_API_URL points
@@ -43,13 +58,16 @@ func slackOptsFromEnv() []slackclient.Option {
 func main() {
 	_ = godotenv.Load() // best-effort: load .env if present
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Bootstrap logger for errors before we know the configured level.
+	boot := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("config", "err", err)
+		boot.Error("config", "err", err)
 		os.Exit(1)
 	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -76,13 +94,18 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// Bounded queue: MQTT handler → worker. Full channel = backpressure.
 	utterances := make(chan transcript.Utterance, 256)
 
-	// Worker: process utterances serially.
+	// Worker: process utterances serially, exit on ctx cancellation.
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		for u := range utterances {
-			if err := rt.Handle(ctx, u); err != nil {
-				logger.Warn("handle utterance", "device", u.Device, "err", err)
+		for {
+			select {
+			case u := <-utterances:
+				if err := rt.Handle(ctx, u); err != nil {
+					logger.Warn("handle utterance", "device", u.Device, "err", err)
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
@@ -146,7 +169,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	<-ctx.Done()
 	logger.Info("stopping")
 	client.Disconnect(500)
-	close(utterances)
+	// NOTE: do not close(utterances). paho's Disconnect can return before its
+	// message router stops, so a late msgHandler could still send; closing the
+	// channel would risk a send-on-closed-channel panic. The worker instead exits
+	// on ctx.Done() and the channel is never closed, so every send stays safe.
 	<-workerDone
 	return nil
 }
