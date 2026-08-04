@@ -1,0 +1,17 @@
+# secrets & local state — never commit
+.env
+*.env
+noseyposey.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Go build output
+/noseyposey
+/dist/
+*.test
+*.out
+
+# editor/OS cruft
+.DS_Store
