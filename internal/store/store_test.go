@@ -69,3 +69,38 @@ func TestPrune(t *testing.T) {
 		t.Fatal("expected pruned row to be gone")
 	}
 }
+
+func TestRestartSurvival(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "survive.db")
+
+	// First handle: write thread and posted record.
+	s1, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open s1: %v", err)
+	}
+	if err := s1.SaveThread("ivan-desk", "2026-08-04", "C999", "500.600"); err != nil {
+		t.Fatalf("SaveThread: %v", err)
+	}
+	if err := s1.MarkPosted("ivan-desk", "ts|abc12345"); err != nil {
+		t.Fatalf("MarkPosted: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close s1: %v", err)
+	}
+
+	// Second handle at the same path: verify state survived.
+	s2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open s2: %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	ts, ok, err := s2.ThreadTS("ivan-desk", "2026-08-04")
+	if err != nil || !ok || ts != "500.600" {
+		t.Fatalf("ThreadTS after restart = (%q, %v, %v); want (\"500.600\", true, nil)", ts, ok, err)
+	}
+	posted, err := s2.AlreadyPosted("ivan-desk", "ts|abc12345")
+	if err != nil || !posted {
+		t.Fatalf("AlreadyPosted after restart = (%v, %v); want (true, nil)", posted, err)
+	}
+}
