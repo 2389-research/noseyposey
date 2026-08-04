@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# ABOUTME: Canonical build/lint/test gate for noseyposey.
+# ABOUTME: Run before every commit; keeps formatting, vet, lint, and tests green.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> gofmt"
+unformatted=$(gofmt -l . || true)
+if [ -n "$unformatted" ]; then
+	echo "gofmt needs: $unformatted" >&2
+	exit 1
+fi
+
+echo "==> go vet"
+go vet ./...
+
+echo "==> golangci-lint"
+golangci-lint run ./...
+
+echo "==> go test"
+go test ./... "$@"
+
+echo "check: OK"
