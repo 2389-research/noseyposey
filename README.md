@@ -9,8 +9,7 @@ per day, each utterance a threaded reply.
 ## Quick start
 ```
 cp .env.example .env      # fill NP_SLACK_TOKEN + NP_SLACK_CHANNEL
-set -a; . ./.env; set +a
-go run ./cmd/noseyposey
+go run ./cmd/noseyposey    # auto-loads .env from the working directory
 ```
 
 ## Check
