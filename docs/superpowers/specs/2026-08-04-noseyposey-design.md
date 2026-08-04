@@ -1,6 +1,6 @@
 # noseyposey — MQTT → Slack transcript bridge
 
-**Status:** design approved (pending written-spec review)
+**Status:** approved — Go confirmed; Slack pipe (token + channel `C0A3JTFTB5M` + threading) verified live 2026-08-04
 **Date:** 2026-08-04
 
 ## Purpose
@@ -103,11 +103,12 @@ README.md
 
 Single binary under systemd or a container; secrets via env. Deployment automation is out of scope for the first cut.
 
-## Open assumptions to confirm at spec review
+## Settled decisions
 
-1. **Go** (not Python).
-2. Backpressure-not-drop on queue saturation.
-3. No utterance filtering in v1.
+1. **Go** — confirmed.
+2. **Backpressure-not-drop** on queue saturation.
+3. **No utterance filtering** in v1.
+4. Slack pipe verified end to end (parent + threaded reply + delete) against channel `C0A3JTFTB5M`.
 
 ---
 
