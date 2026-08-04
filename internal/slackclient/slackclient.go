@@ -112,16 +112,22 @@ func (c *Client) Post(ctx context.Context, channel, threadTS, text string) (stri
 }
 
 func (c *Client) rateLimit(ctx context.Context) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.minInterval <= 0 {
 		return
 	}
+	c.mu.Lock()
 	wait := c.minInterval - time.Since(c.last)
+	// Claim this call's slot, then release the lock BEFORE sleeping. Holding the
+	// mutex across the sleep would serialize concurrent callers on the lock
+	// itself — and a canceled ctx could not unblock a goroutine already waiting
+	// for it — instead of spacing them by minInterval.
 	if wait > 0 {
-		sleep(ctx, wait)
+		c.last = time.Now().Add(wait)
+	} else {
+		c.last = time.Now()
 	}
-	c.last = time.Now()
+	c.mu.Unlock()
+	sleep(ctx, wait) // no-op when wait <= 0
 }
 
 // sleep waits for d or until ctx is done. Returns false if ctx was canceled.

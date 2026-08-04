@@ -112,3 +112,24 @@ func TestPostDoesNotRetryPermanentError(t *testing.T) {
 		t.Errorf("calls = %d, want 1 (no retries on permanent error)", *calls)
 	}
 }
+
+func TestPostRateLimitSpacing(t *testing.T) {
+	// Two posts with a positive min interval are spaced by at least that interval.
+	// This is a lower-bound timing assertion: a slow machine only adds delay, it
+	// never removes it, so the test does not flake under load. The first post is
+	// immediate (no prior call); the second must wait ~minInterval.
+	srv, calls := fakeSlack(t, 0) // never fails
+	c := New("xoxb-test", WithAPIURL(srv.URL+"/"), WithMinInterval(100*time.Millisecond))
+	start := time.Now()
+	for i := 0; i < 2; i++ {
+		if _, err := c.Post(context.Background(), "C123", "", "hi"); err != nil {
+			t.Fatalf("Post %d: %v", i, err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed < 90*time.Millisecond {
+		t.Errorf("two posts took %v, want >= ~100ms spacing", elapsed)
+	}
+	if *calls != 2 {
+		t.Errorf("calls = %d, want 2", *calls)
+	}
+}
