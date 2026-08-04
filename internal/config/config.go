@@ -33,6 +33,9 @@ func Load() (Config, error) {
 	cfg := Config{
 		MQTTBroker:   env("NP_MQTT_BROKER", "tcp://192.168.23.123:1883"),
 		MQTTClientID: env("NP_MQTT_CLIENT_ID", "noseyposey"),
+		// Required fields use os.Getenv directly (not env()) so an empty value
+		// stays empty and fails the required check below. env() would substitute
+		// the default, silently swallowing the missing-value error.
 		SlackToken:   os.Getenv("NP_SLACK_TOKEN"),
 		SlackChannel: os.Getenv("NP_SLACK_CHANNEL"),
 		Timezone:     env("NP_TIMEZONE", "America/Chicago"),

@@ -28,6 +28,9 @@ func TestLoadDefaultsAndRequired(t *testing.T) {
 	if cfg.DBPath != "./noseyposey.db" {
 		t.Errorf("DBPath default = %q", cfg.DBPath)
 	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("LogLevel default = %q", cfg.LogLevel)
+	}
 }
 
 func TestLoadMissingTokenFails(t *testing.T) {
@@ -35,6 +38,14 @@ func TestLoadMissingTokenFails(t *testing.T) {
 	t.Setenv("NP_SLACK_CHANNEL", "C123")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error when NP_SLACK_TOKEN missing")
+	}
+}
+
+func TestLoadMissingChannelFails(t *testing.T) {
+	t.Setenv("NP_SLACK_TOKEN", "xoxb-abc")
+	t.Setenv("NP_SLACK_CHANNEL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when NP_SLACK_CHANNEL missing")
 	}
 }
 
