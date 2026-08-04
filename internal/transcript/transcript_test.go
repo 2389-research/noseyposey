@@ -54,3 +54,10 @@ func TestParseBadJSON(t *testing.T) {
 		t.Fatal("expected error on bad JSON")
 	}
 }
+
+func TestParseBadTimestamp(t *testing.T) {
+	payload := []byte(`{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"Whoa.","timestamp":"not-a-time"}`)
+	if _, err := Parse("horton/transcriptions/ivan-desk", payload); err == nil {
+		t.Fatal("expected error on unparseable timestamp")
+	}
+}
