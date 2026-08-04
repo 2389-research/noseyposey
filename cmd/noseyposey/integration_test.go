@@ -99,6 +99,19 @@ func publish(t *testing.T, broker, topic, payload string) {
 	}
 }
 
+// waitFor polls cond until it holds or the timeout elapses.
+func waitFor(t *testing.T, cond func() bool, timeout time.Duration, what string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}
+
 func TestEndToEnd(t *testing.T) {
 	port := freePort(t)
 	startMosquitto(t, port)
@@ -166,5 +179,98 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if parents != 2 || replies != 3 {
 		t.Errorf("parents=%d replies=%d, want 2 and 3", parents, replies)
+	}
+}
+
+// TestPersistentSessionReconnect proves a restarted daemon relays the
+// transcriptions the broker queued while it was offline — in order, none dropped.
+//
+// With CleanSession(false) the broker holds QoS-1 messages for the offline client
+// and floods them on reconnect. Two failure modes:
+//
+//   - Ordering: with OrderMatters=false paho dispatches each message on its own
+//     goroutine, so the flood posts out of sequence. This reproduces reliably
+//     here and is the regression this test was written to catch.
+//   - Drop: if a flooded message reaches paho before OnConnect's Subscribe()
+//     reaches addRoute, and no DefaultPublishHandler catches it, paho drops it
+//     unacknowledged (router.go matchAndDispatch: "no handler was available.
+//     Message will NOT be acknowledged"). The window is narrow — route
+//     registration is in-memory with no network wait — so this rarely fires in
+//     the test, but the source shows it is real; the default handler closes it.
+func TestPersistentSessionReconnect(t *testing.T) {
+	port := freePort(t)
+	startMosquitto(t, port)
+	broker := fmt.Sprintf("tcp://127.0.0.1:%d", port)
+
+	slackSrv := &recordingSlack{}
+	srv := httptest.NewServer(slackSrv.handler())
+	defer srv.Close()
+
+	t.Setenv("NP_SLACK_API_URL", srv.URL+"/")
+	t.Setenv("NP_SLACK_MIN_INTERVAL_MS", "0")
+
+	loc, _ := time.LoadLocation("America/Chicago")
+	cfg := config.Config{
+		MQTTBroker:   broker,
+		MQTTClientID: "noseyposey-reconnect-itest", // fixed → same persistent session across runs
+		SlackToken:   "xoxb-test",
+		SlackChannel: "C123",
+		Timezone:     "America/Chicago",
+		Location:     loc,
+		DBPath:       filepath.Join(t.TempDir(), "reconnect.db"),
+		LogLevel:     "info",
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	runOnce := func() (context.CancelFunc, chan struct{}) {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { _ = run(ctx, cfg, logger); close(done) }()
+		return cancel, done
+	}
+
+	// Phase 1: establish the persistent session. Warm up with one message and wait
+	// for it to post (parent + reply = 2), proving the subscription is live, then
+	// shut down cleanly so the broker retains the session and its subscription.
+	// The sleep lets OnConnect's Subscribe register before we publish: on a fresh
+	// session a message sent to a not-yet-subscribed topic has no subscriber and is
+	// lost, not queued.
+	cancel1, done1 := runOnce()
+	time.Sleep(1500 * time.Millisecond)
+	warm := `{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"warmup","timestamp":"2026-08-03T20:00:00.000000"}`
+	publish(t, broker, "horton/transcriptions/ivan-desk", warm)
+	waitFor(t, func() bool { return slackSrv.count() >= 2 }, 5*time.Second, "warmup to post")
+	cancel1()
+	<-done1
+
+	// Phase 2: publish while the daemon is offline. The broker queues these QoS-1
+	// messages for the retained session. Distinct ascending timestamps → no dedup.
+	const m = 20
+	for i := 0; i < m; i++ {
+		payload := fmt.Sprintf(`{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"offline-%02d","timestamp":"2026-08-03T20:%02d:00.000000"}`, i, i+1)
+		publish(t, broker, "horton/transcriptions/ivan-desk", payload)
+	}
+
+	// Phase 3: restart. The broker floods the queued messages on reconnect. Every
+	// one must post (as a reply under the existing thread), and in publish order.
+	before := slackSrv.count()
+	cancel2, done2 := runOnce()
+	waitFor(t, func() bool { return slackSrv.count() >= before+m }, 10*time.Second, "queued messages to post")
+	cancel2()
+	<-done2
+
+	if got := slackSrv.count() - before; got != m {
+		t.Fatalf("queued-while-offline delivery: got %d posts, want %d — messages dropped on reconnect", got, m)
+	}
+	var seq []string
+	for _, p := range slackSrv.posts[before:] {
+		if p["thread_ts"] != "" { // replies only
+			seq = append(seq, p["text"])
+		}
+	}
+	for i := 1; i < len(seq); i++ {
+		if seq[i] < seq[i-1] {
+			t.Errorf("out-of-order replies: %q before %q at index %d", seq[i-1], seq[i], i)
+			break
+		}
 	}
 }

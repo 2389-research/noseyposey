@@ -147,14 +147,39 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 	}
 
+	// Persistent session: CleanSession(false) + a stable client ID makes the
+	// broker hold our subscription and queue QoS-1 messages while we are
+	// offline, then flood them on reconnect. Two options below handle the
+	// consequences.
+	//
+	// SetDefaultPublishHandler closes a replay race. On (re)connect paho starts
+	// its message router and opens the incoming pipe before it runs OnConnect —
+	// which registers the per-topic route — in a separate goroutine that does
+	// not block that pipe. A queued message arriving before OnConnect's
+	// Subscribe reaches addRoute would hit an empty route table and be dropped
+	// unacknowledged. Wiring the same handler as the default catches anything in
+	// that window; once the route is live, paho routes to it and never also
+	// calls the default, so no message posts twice. (We do not set ResumeSubs:
+	// it governs only SUBSCRIBE packets issued while disconnected, and we always
+	// subscribe from OnConnect while connected — it defaults to false anyway.)
+	//
+	// SetOrderMatters(true) preserves utterance order. With it false paho
+	// dispatches each message on its own goroutine and the reconnect flood posts
+	// out of sequence (TestPersistentSessionReconnect proves this). paho warns
+	// that with order on, handlers must not block — but here a blocking handler
+	// is the point. It only does a bounded channel send, and blocking the router
+	// is exactly the backpressure we want under overload. The worst case, a
+	// handler stalled past the keepalive interval, stops the network reader and
+	// makes paho reconnect; with CleanSession(false) the broker then re-delivers
+	// the queued messages in order, so backpressure degrades without loss.
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.MQTTBroker).
 		SetClientID(cfg.MQTTClientID).
 		SetCleanSession(false).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetResumeSubs(false).
-		SetOrderMatters(false).
+		SetOrderMatters(true).
+		SetDefaultPublishHandler(msgHandler).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			if token := c.Subscribe(subscribeTopic, 1, msgHandler); token.Wait() && token.Error() != nil {
 				logger.Error("subscribe", "err", token.Error())
