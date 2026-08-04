@@ -40,3 +40,6 @@ speech (no backfill).
   persistent session, those utterances are lost.
 - One post per utterance, rate-limited to ~1/sec/channel; sustained heavy talk
   across many devices queues (backpressure), it does not drop.
+- A prolonged Slack outage fills that queue and stalls the MQTT read loop, so
+  the client reconnects on its keepalive timer. Nothing is lost — the backlog
+  posts once Slack recovers — but expect reconnect churn in the logs meanwhile.
