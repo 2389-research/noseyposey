@@ -65,6 +65,8 @@ func (r *Router) Handle(ctx context.Context, u transcript.Utterance) error {
 		if err != nil {
 			return fmt.Errorf("post parent: %w", err)
 		}
+		// Known at-least-once hazard: if SaveThread fails the parent is already in Slack.
+		// A retry will post a new parent — inherent in at-least-once delivery, not fixable here.
 		if err := r.store.SaveThread(u.Device, date, r.channel, ts); err != nil {
 			return fmt.Errorf("save thread: %w", err)
 		}
