@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,8 +32,15 @@ type clientConfig struct {
 	maxRetries  int
 }
 
-// WithAPIURL overrides the Slack API base URL (used in tests). Needs a trailing slash.
-func WithAPIURL(u string) Option { return func(c *clientConfig) { c.apiURL = u } }
+// WithAPIURL overrides the Slack API base URL (used in tests). Appends a trailing slash if absent.
+func WithAPIURL(u string) Option {
+	return func(c *clientConfig) {
+		if !strings.HasSuffix(u, "/") {
+			u += "/"
+		}
+		c.apiURL = u
+	}
+}
 
 // WithMinInterval sets the minimum spacing between posts.
 func WithMinInterval(d time.Duration) Option { return func(c *clientConfig) { c.minInterval = d } }
@@ -80,16 +88,25 @@ func (c *Client) Post(ctx context.Context, channel, threadTS, text string) (stri
 
 		var rl *slack.RateLimitedError
 		if errors.As(err, &rl) {
+			// 429 with Retry-After: honor the server's requested delay.
 			if !sleep(ctx, rl.RetryAfter) {
 				return "", ctx.Err()
 			}
 			continue
 		}
-		// transient backoff: 500ms, 1s, 2s, ...
-		backoff := time.Duration(500) * time.Millisecond << attempt
-		if !sleep(ctx, backoff) {
-			return "", ctx.Err()
+
+		var sc slack.StatusCodeError
+		if errors.As(err, &sc) && sc.Code >= 500 {
+			// HTTP 5xx: transient backoff: 500ms, 1s, 2s, ...
+			backoff := time.Duration(500) * time.Millisecond << attempt
+			if !sleep(ctx, backoff) {
+				return "", ctx.Err()
+			}
+			continue
 		}
+
+		// Permanent error (4xx other than 429, API-level ok:false, etc.): fail immediately.
+		return "", fmt.Errorf("post to %s failed: %w", channel, err)
 	}
 	return "", fmt.Errorf("post to %s failed after retries: %w", channel, lastErr)
 }
