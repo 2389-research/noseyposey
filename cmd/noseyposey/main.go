@@ -153,8 +153,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		SetCleanSession(false).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetResumeSubs(true).
-		SetOrderMatters(true).
+		SetResumeSubs(false).
+		SetOrderMatters(false).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			if token := c.Subscribe(subscribeTopic, 1, msgHandler); token.Wait() && token.Error() != nil {
 				logger.Error("subscribe", "err", token.Error())
