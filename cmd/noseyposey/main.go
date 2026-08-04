@@ -132,6 +132,12 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		}
 		u, err := transcript.Parse(m.Topic(), m.Payload())
 		if err != nil {
+			// Drop-with-warning on any unparseable payload. Malformed JSON or missing
+			// text has nothing to relay. The deferred case: the design spec wants a
+			// receipt-time fallback when only the timestamp is bad — post under "now"
+			// instead of dropping. That's post-v1 (Harper ruled ship-as-is); horton
+			// timestamps have been well-formed in practice, and these warnings are the
+			// cue to build it if they ever fire.
 			logger.Warn("parse", "topic", m.Topic(), "err", err)
 			return
 		}
