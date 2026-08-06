@@ -1,0 +1,14 @@
+# ABOUTME: Runs noseyposey with state persisted to a named volume.
+# ABOUTME: Secrets come from .env (gitignored) — never hardcode them here.
+services:
+  noseyposey:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - db:/data
+    environment:
+      NP_DB_PATH: /data/noseyposey.db
+
+volumes:
+  db:

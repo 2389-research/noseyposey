@@ -1,0 +1,10 @@
+.env
+*.env
+*.db
+*.db-journal
+*.db-wal
+/noseyposey
+/dist/
+*.test
+*.out
+.DS_Store
