@@ -8,7 +8,9 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 go build -o /noseyposey ./cmd/noseyposey
+RUN mkdir -p /data
 
 FROM gcr.io/distroless/static:nonroot
+COPY --from=builder --chown=65532:65532 /data /data
 COPY --from=builder /noseyposey /noseyposey
 ENTRYPOINT ["/noseyposey"]
