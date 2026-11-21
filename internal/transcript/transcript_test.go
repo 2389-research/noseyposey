@@ -49,6 +49,18 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseExplicitUTC(t *testing.T) {
+	payload := []byte(`{"text":"hello","timestamp":"2026-08-03T20:29:00Z"}`)
+	u, err := Parse("horton/transcriptions/test", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 8, 3, 20, 29, 0, 0, time.UTC)
+	if u.Timestamp != want {
+		t.Errorf("Timestamp = %v, want %v", u.Timestamp, want)
+	}
+}
+
 func TestParseBadJSON(t *testing.T) {
 	if _, err := Parse("horton/transcriptions/x", []byte("not json")); err == nil {
 		t.Fatal("expected error on bad JSON")

@@ -46,7 +46,8 @@ func Parse(topic string, payload []byte) (Utterance, error) {
 	if err := json.Unmarshal(payload, &w); err != nil {
 		return Utterance{}, fmt.Errorf("decode transcription: %w", err)
 	}
-	ts, err := time.ParseInLocation(timestampLayout, w.Timestamp, time.UTC)
+	// Horton sends UTC timestamps with or without a trailing Z.
+	ts, err := time.ParseInLocation(timestampLayout, strings.TrimSuffix(w.Timestamp, "Z"), time.UTC)
 	if err != nil {
 		return Utterance{}, fmt.Errorf("parse timestamp %q: %w", w.Timestamp, err)
 	}
