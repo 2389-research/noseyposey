@@ -1,3 +1,5 @@
+// ABOUTME: Exercises the relay with a local MQTT broker and SQLite database.
+// ABOUTME: Records Slack API requests to verify thread delivery and reconnects.
 package main
 
 import (
@@ -149,7 +151,7 @@ func TestEndToEnd(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	ivan := `{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"Whoa.","timestamp":"2026-08-03T20:28:54.331766"}`
-	ivan2 := `{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"Yeah.","timestamp":"2026-08-03T20:29:00.000000"}`
+	ivan2 := `{"device":"ivan-desk","mac":"1C:DB:D4:85:65:7C","text":"Yeah.","timestamp":"2026-08-03T20:29:00Z"}`
 	horton := `{"device":"horton","mac":"3C:0F:02:E3:B1:08","text":"Ready.","timestamp":"2026-08-03T20:29:05.000000"}`
 
 	publish(t, broker, "horton/transcriptions/ivan-desk", ivan)
